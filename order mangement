@@ -24,6 +24,18 @@ CREATE TABLE wms_order_line (
 CREATE SEQUENCE seq_order_id START WITH 1000 INCREMENT BY 1 NOCACHE NOCYCLE;
 CREATE SEQUENCE seq_order_line_id START WITH 10000 INCREMENT BY 1 NOCACHE NOCYCLE;
 
+-- 2a. Create Inventory Table
+CREATE TABLE wms_inventory (
+    inventory_id     NUMBER PRIMARY KEY,
+    product_id       NUMBER NOT NULL,
+    qty_on_hand      NUMBER(10,2) NOT NULL,
+    qty_allocated    NUMBER(10,2) DEFAULT 0,
+    unlocked_status  VARCHAR2(20) DEFAULT 'UNLOCKED',
+    last_updated     DATE DEFAULT SYSDATE
+);
+
+CREATE SEQUENCE seq_inventory_id START WITH 5000 INCREMENT BY 1 NOCACHE NOCYCLE;
+
 -- 4. Create PL/SQL Package Specification
 CREATE OR REPLACE PACKAGE pkg_order_mgmt AS
     -- Procedure to create a new order
@@ -46,6 +58,9 @@ CREATE OR REPLACE PACKAGE pkg_order_mgmt AS
     FUNCTION get_order_total(
         p_order_id      IN NUMBER
     ) RETURN NUMBER;
+
+    -- Procedure to allocate order if inventory conditions are met
+    PROCEDURE allocate_order(p_order_id IN NUMBER);
 END pkg_order_mgmt;
 /
 
@@ -105,6 +120,28 @@ CREATE OR REPLACE PACKAGE BODY pkg_order_mgmt AS
         SELECT total_amount INTO v_total FROM wms_order WHERE order_id = p_order_id;
         RETURN v_total;
     END get_order_total;
+
+    PROCEDURE allocate_order(p_order_id IN NUMBER) IS
+        v_count NUMBER;
+        v_total_lines NUMBER;
+    BEGIN
+        -- Count order lines that meet inventory conditions
+        SELECT COUNT(*) INTO v_count
+        FROM wms_order_line ol
+        JOIN wms_inventory inv ON ol.product_id = inv.product_id
+        WHERE ol.order_id = p_order_id
+          AND inv.qty_on_hand <> 0
+          AND inv.qty_allocated = 0
+          AND inv.unlocked_status <> 'LOCKED';
+
+        -- Count total order lines
+        SELECT COUNT(*) INTO v_total_lines FROM wms_order_line WHERE order_id = p_order_id;
+
+        -- If all order lines meet the inventory conditions, allocate the order
+        IF v_count = v_total_lines THEN
+            UPDATE wms_order SET status = 'ALLOCATE' WHERE order_id = p_order_id;
+        END IF;
+    END allocate_order;
 
 END pkg_order_mgmt;
 /
